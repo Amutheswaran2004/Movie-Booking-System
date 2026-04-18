@@ -1,0 +1,8 @@
+target/
+bin/
+*.class
+.idea/
+*.iml
+.metadata/
+.vscode/
+test.js

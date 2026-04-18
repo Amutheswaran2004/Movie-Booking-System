@@ -14,10 +14,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.app.movieBookingSystem.dto.MovieRequest;
 import com.app.movieBookingSystem.dto.TicketRequest;
+import com.app.movieBookingSystem.dto.LoginRequest;
+import com.app.movieBookingSystem.dto.JwtResponse;
 import com.app.movieBookingSystem.model.Movie;
 import com.app.movieBookingSystem.model.User;
 import com.app.movieBookingSystem.repository.UserRepository;
 import com.app.movieBookingSystem.service.MovieService;
+import com.app.movieBookingSystem.security.JwtUtils;
+import com.app.movieBookingSystem.security.JwtUtils;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 @RestController
 @RequestMapping("/api/v1.0/moviebooking")
@@ -28,11 +33,50 @@ public class MovieController {
     @Autowired
     private UserRepository userRepo;
 
+
+    @Autowired
+    private PasswordEncoder encoder;
+
+    @Autowired
+    private JwtUtils jwtUtils;
+
+    @PostMapping("/login")
+    public ResponseEntity<?> authenticateUser(@RequestBody LoginRequest loginRequest) {
+        java.util.Optional<User> userOpt = userRepo.findByLoginId(loginRequest.getLoginId());
+        
+        if (userOpt.isPresent() && encoder.matches(loginRequest.getPassword(), userOpt.get().getPassword())) {
+            User user = userOpt.get();
+            String jwt = jwtUtils.generateJwtToken(user.getLoginId());
+            String role = user.getRole() != null ? user.getRole() : "ROLE_USER";
+            
+            return ResponseEntity.ok(new JwtResponse(jwt,
+                    user.getId(),
+                    user.getLoginId(),
+                    user.getEmail(),
+                    role));
+        } else {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Error: Invalid credentials");
+        }
+    }
+
     // usercontroller
     @PostMapping("/register")
     public ResponseEntity<String> register(@RequestBody User user) {
-        userRepo.save(user);
-        return new ResponseEntity<>("User registered successfully", HttpStatus.CREATED);
+        try {
+            // Ensure ID is null so JPA knows it's a new entity and not an update
+            user.setId(null);
+            
+            if (user.getPassword() != null) {
+                user.setPassword(encoder.encode(user.getPassword()));
+            }
+            userRepo.save(user);
+            return new ResponseEntity<>("User registered successfully", HttpStatus.CREATED);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            return new ResponseEntity<>("Error: Email or Login ID already exists!", HttpStatus.BAD_REQUEST);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ResponseEntity<>("Error: Unable to register user. Reason: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     @GetMapping("/all")
@@ -45,7 +89,10 @@ public class MovieController {
     }
 
     @PostMapping("/addMovie")
-    public ResponseEntity<Movie> addMovie(@RequestBody MovieRequest movieRequest) {
+    public ResponseEntity<?> addMovie(@RequestBody MovieRequest movieRequest) {
+        if(movieRequest.getTotalTickets()>100){
+            return new ResponseEntity<>("Hundred Seats only allowed ",HttpStatus.NOT_ACCEPTABLE);
+        }
         Movie movie = movieService.addMovie(movieRequest);
         return new ResponseEntity<>(movie, HttpStatus.CREATED);
     }

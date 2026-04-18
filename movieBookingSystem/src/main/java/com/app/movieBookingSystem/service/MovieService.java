@@ -1,5 +1,6 @@
 package com.app.movieBookingSystem.service;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -20,6 +21,19 @@ import jakarta.transaction.Transactional;
 
 @Service
 public class MovieService {
+
+    // Container for 100 valid tickets based on SeatReference (Rows A-J)
+    public static final List<String> VALID_SEATS = new ArrayList<>();
+
+    static {
+        // Generates exactly 100 seat positions (e.g., A1, A2... J10)
+        char[] rows = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'};
+        for (char row : rows) {
+            for (int i = 1; i <= 10; i++) {
+                VALID_SEATS.add(row + String.valueOf(i));
+            }
+        }
+    }
 
     @Autowired
     private MovieRepository movieRepo;
@@ -72,14 +86,48 @@ public class MovieService {
     }
 
     public String bookTicket(String moviename, TicketRequest ticketRequest) {
+        String inputSeats = ticketRequest.getSeatNumbers();
+        if (inputSeats == null || inputSeats.isEmpty()) {
+            return "No seats provided";
+        }
+
+        // Parse and standardize requested seats
+        List<String> requestedSeats = Arrays.stream(inputSeats.split(",\\s*"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(String::toUpperCase)
+                .collect(Collectors.toList());
+
+        // 0. Check if the provided seat names length matches the numberOfTickets
+        if (requestedSeats.size() != ticketRequest.getNumberOfTickets()) {
+            return String.format("Validation failed: You requested %d tickets, but provided %d seat names.", 
+                    ticketRequest.getNumberOfTickets(), requestedSeats.size());
+        }
+
+        // 1. Validate if requested seats exist in our 100 valid seats container
+        for (String seat : requestedSeats) {
+            if (!VALID_SEATS.contains(seat)) {
+                return "Validation failed: Invalid seat position '" + seat + "'. Valid seats are A1 to J10.";
+            }
+        }
+
+        // 2. Validate against previously booked tickets for this movie
+        String bookedSeatsStr = getBookedSeatsString(moviename);
+        List<String> alreadyBooked = Arrays.asList(bookedSeatsStr.split(",\\s*"));
+
+        for (String seat : requestedSeats) {
+            if (alreadyBooked.contains(seat) && !seat.isEmpty()) {
+                return "Booking failed: Seat '" + seat + "' is already booked for this movie.";
+            }
+        }
+
         Ticket newTicket = new Ticket();
-        // Movie movie = movieRepo.findByMovieName(moviename);
-        // Long movieId = movie.getMovieId();
         newTicket.setMovieName(moviename);
         newTicket.setTheatreName(ticketRequest.getTheatreName());
         newTicket.setNumberOfTickets(ticketRequest.getNumberOfTickets());
-        newTicket.setSeatNumbers(ticketRequest.getSeatNumbers());
+        newTicket.setSeatNumbers(String.join(", ", requestedSeats)); // Save standardized uniform string
         ticketRepo.save(newTicket);
+        
         // Trigger status update logic
         updateTicketStatus(moviename);
         return "Tickets booked successfully";
@@ -100,6 +148,11 @@ public class MovieService {
         Optional<Movie> movie = movieRepo.findById(movieId);
 
         if (movie.isPresent()) {
+            // Check if the provided movieName matches the actual movie's name
+            if (!movie.get().getMovieName().equalsIgnoreCase(movieName)) {
+                return false;
+            }
+
             // 2. Find all tickets as a List (Correct way to avoid ClassCastException)
             List<Ticket> tickets = ticketRepo.findByMovieName(movieName);
 
